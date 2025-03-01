@@ -10,7 +10,8 @@ from llm_service import (
     LLMProvider, 
     LLMResponse, 
     ProviderType,
-    LLMRequest
+    LLMRequest,
+    LLMModelConfig
 )
 
 # Extended message content types for multimodal models
@@ -57,12 +58,18 @@ def extend_llm_service(original_module):
                 # Get base64 encoded image
                 base64_image = request.get_base64_image()
                 
+                # For Groq, we need to incorporate system message into the user prompt
+                # because Groq doesn't support system messages with image prompts
+                user_prompt = request.image_description_prompt
+                if request.system_prompt:
+                    user_prompt = f"{request.system_prompt}\n\n{user_prompt}"
+                
                 # Format messages for vision model
                 messages = [
                     {
                         "role": "user",
                         "content": [
-                            {"type": "text", "text": request.image_description_prompt},
+                            {"type": "text", "text": user_prompt},
                             {
                                 "type": "image_url",
                                 "image_url": {
@@ -73,16 +80,9 @@ def extend_llm_service(original_module):
                     }
                 ]
                 
-                # Add system message if provided
-                if request.system_prompt:
-                    messages.insert(0, {
-                        "role": "system",
-                        "content": request.system_prompt
-                    })
-                
                 # Call the model
                 response = self.client.chat.completions.create(
-                    model=request.model_config.model_name,
+                    model=request.llm_config.model_name,
                     messages=messages,
                     temperature=request.temperature,
                     max_tokens=request.max_tokens or 1024,
@@ -91,7 +91,7 @@ def extend_llm_service(original_module):
                 
                 return LLMResponse(
                     content=response.choices[0].message.content,
-                    model=request.model_config.model_name,
+                    model=request.llm_config.model_name,
                     usage={
                         "prompt_tokens": response.usage.prompt_tokens if hasattr(response.usage, "prompt_tokens") else 0,
                         "completion_tokens": response.usage.completion_tokens if hasattr(response.usage, "completion_tokens") else 0,
@@ -138,7 +138,7 @@ def extend_llm_service(original_module):
                 
                 # Call the model (must be a vision-capable model)
                 response = self.client.chat.completions.create(
-                    model=request.model_config.model_name,  # Should be gpt-4-vision or similar
+                    model=request.llm_config.model_name,  # Should be gpt-4-vision or similar
                     messages=messages,
                     temperature=request.temperature,
                     max_tokens=request.max_tokens or 1024,
@@ -147,7 +147,7 @@ def extend_llm_service(original_module):
                 
                 return LLMResponse(
                     content=response.choices[0].message.content,
-                    model=request.model_config.model_name,
+                    model=request.llm_config.model_name,
                     usage={
                         "prompt_tokens": response.usage.prompt_tokens,
                         "completion_tokens": response.usage.completion_tokens,
@@ -170,8 +170,8 @@ def extend_llm_service(original_module):
         def process_image(self, request: ImageToTextRequest) -> str:
             """Process an image and return a text description"""
             provider = self._get_provider(
-                request.model_config.provider,
-                request.model_config.api_key
+                request.llm_config.provider,
+                request.llm_config.api_key
             )
             
             # Check if provider has image processing capability

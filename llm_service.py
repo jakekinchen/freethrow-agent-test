@@ -34,20 +34,19 @@ class ProviderType(str, Enum):
     ANTHROPIC = "anthropic"
     GROQ = "groq"
 
-class ModelConfig(BaseModel):
+class LLMModelConfig(BaseModel):
     """Configuration for an LLM model"""
     provider: ProviderType
     model_name: str
     api_key: Optional[str] = None
     
-    class Config:
-        use_enum_values = True
+    model_config = {"use_enum_values": True}
 
 class LLMRequest(BaseModel):
     """Standard request structure for all LLM providers"""
     system_prompt: Optional[str] = None
     user_prompt: str
-    model_config: ModelConfig
+    llm_config: LLMModelConfig
     temperature: float = 0.7
     max_tokens: Optional[int] = None
     top_p: Optional[float] = None
@@ -100,19 +99,29 @@ class OpenAIProvider(LLMProvider):
                 messages.append({"role": "system", "content": request.system_prompt})
             messages.append({"role": "user", "content": request.user_prompt})
             
-            response = self.client.chat.completions.create(
-                model=request.model_config.model_name,
-                messages=messages,
-                temperature=request.temperature,
-                max_tokens=request.max_tokens,
-                top_p=request.top_p,
-                stream=request.stream,
-                **request.additional_params
-            )
+            # Build parameters, excluding None values
+            params = {
+                "model": request.llm_config.model_name,
+                "messages": messages,
+                "temperature": request.temperature,
+                "stream": request.stream,
+            }
+            
+            # Only include non-None parameters
+            if request.max_tokens is not None:
+                params["max_tokens"] = request.max_tokens
+            if request.top_p is not None:
+                params["top_p"] = request.top_p
+                
+            # Add any additional params
+            params.update(request.additional_params)
+            
+            # Call the API
+            response = self.client.chat.completions.create(**params)
             
             return LLMResponse(
                 content=response.choices[0].message.content,
-                model=request.model_config.model_name,
+                model=request.llm_config.model_name,
                 usage={
                     "prompt_tokens": response.usage.prompt_tokens,
                     "completion_tokens": response.usage.completion_tokens,
@@ -130,16 +139,26 @@ class OpenAIProvider(LLMProvider):
                 messages.append({"role": "system", "content": request.system_prompt})
             messages.append({"role": "user", "content": request.user_prompt})
             
-            response = self.client.chat.completions.create(
-                model=request.model_config.model_name,
-                messages=messages,
-                response_format={"type": "json_object"},
-                temperature=request.temperature,
-                max_tokens=request.max_tokens,
-                top_p=request.top_p,
-                stream=request.stream,
-                **request.additional_params
-            )
+            # Build parameters, excluding None values
+            params = {
+                "model": request.llm_config.model_name,
+                "messages": messages,
+                "response_format": {"type": "json_object"},
+                "temperature": request.temperature,
+                "stream": request.stream,
+            }
+            
+            # Only include non-None parameters
+            if request.max_tokens is not None:
+                params["max_tokens"] = request.max_tokens
+            if request.top_p is not None:
+                params["top_p"] = request.top_p
+                
+            # Add any additional params
+            params.update(request.additional_params)
+            
+            # Call the API
+            response = self.client.chat.completions.create(**params)
             
             json_response = json.loads(response.choices[0].message.content)
             return request.response_model.model_validate(json_response)
@@ -152,8 +171,12 @@ class AnthropicProvider(LLMProvider):
     def __init__(self, api_key: str):
         try:
             import anthropic
+            import httpx
+            # Create client with explicitly setting the httpx client to avoid socket_options issue
+            # This helps with compatibility across different versions of anthropic and httpx
             self.client = anthropic.Anthropic(
-                api_key=api_key
+                api_key=api_key,
+                # Don't pass httpx client or additional options that may not be supported
             )
         except ImportError:
             raise ImportError("Anthropic package is not installed. Install with 'pip install anthropic'")
@@ -167,17 +190,25 @@ class AnthropicProvider(LLMProvider):
                 messages.append({"role": "system", "content": request.system_prompt})
             messages.append({"role": "user", "content": request.user_prompt})
             
-            response = self.client.messages.create(
-                model=request.model_config.model_name,
-                messages=messages,
-                temperature=request.temperature,
-                max_tokens=request.max_tokens or 1024,
-                **request.additional_params
-            )
+            # Create params dict to avoid incompatible parameters
+            params = {
+                "model": request.llm_config.model_name,
+                "messages": messages,
+                "temperature": request.temperature,
+                "max_tokens": request.max_tokens or 1024,
+            }
+            
+            # Add any supported additional params
+            supported_params = ["top_p", "top_k", "stop_sequences", "stream"]
+            for param, value in request.additional_params.items():
+                if param in supported_params:
+                    params[param] = value
+            
+            response = self.client.messages.create(**params)
             
             return LLMResponse(
                 content=response.content[0].text,
-                model=request.model_config.model_name,
+                model=request.llm_config.model_name,
                 usage={
                     "input_tokens": response.usage.input_tokens,
                     "output_tokens": response.usage.output_tokens,
@@ -204,13 +235,21 @@ class AnthropicProvider(LLMProvider):
                 {"role": "user", "content": request.user_prompt}
             ]
             
-            response = self.client.messages.create(
-                model=request.model_config.model_name,
-                messages=messages,
-                temperature=request.temperature,
-                max_tokens=request.max_tokens or 1024,
-                **request.additional_params
-            )
+            # Create params dict to avoid incompatible parameters
+            params = {
+                "model": request.llm_config.model_name,
+                "messages": messages,
+                "temperature": request.temperature,
+                "max_tokens": request.max_tokens or 1024,
+            }
+            
+            # Add any supported additional params
+            supported_params = ["top_p", "top_k", "stop_sequences", "stream"]
+            for param, value in request.additional_params.items():
+                if param in supported_params:
+                    params[param] = value
+            
+            response = self.client.messages.create(**params)
             
             # Try to parse JSON from the response
             try:
@@ -251,19 +290,29 @@ class GroqProvider(LLMProvider):
                 messages.append({"role": "system", "content": request.system_prompt})
             messages.append({"role": "user", "content": request.user_prompt})
             
-            response = self.client.chat.completions.create(
-                model=request.model_config.model_name,
-                messages=messages,
-                temperature=request.temperature,
-                max_tokens=request.max_tokens,
-                top_p=request.top_p,
-                stream=request.stream,
-                **request.additional_params
-            )
+            # Build parameters, excluding None values
+            params = {
+                "model": request.llm_config.model_name,
+                "messages": messages,
+                "temperature": request.temperature,
+                "stream": request.stream,
+            }
+            
+            # Only include non-None parameters
+            if request.max_tokens is not None:
+                params["max_tokens"] = request.max_tokens
+            if request.top_p is not None:
+                params["top_p"] = request.top_p
+                
+            # Add any additional params
+            params.update(request.additional_params)
+            
+            # Call the API
+            response = self.client.chat.completions.create(**params)
             
             return LLMResponse(
                 content=response.choices[0].message.content,
-                model=request.model_config.model_name,
+                model=request.llm_config.model_name,
                 usage={
                     "prompt_tokens": response.usage.prompt_tokens,
                     "completion_tokens": response.usage.completion_tokens,
@@ -290,13 +339,24 @@ class GroqProvider(LLMProvider):
                 {"role": "user", "content": request.user_prompt}
             ]
             
-            response = self.client.chat.completions.create(
-                model=request.model_config.model_name,
-                messages=messages,
-                temperature=request.temperature,
-                max_tokens=request.max_tokens,
-                **request.additional_params
-            )
+            # Build parameters, excluding None values
+            params = {
+                "model": request.llm_config.model_name,
+                "messages": messages,
+                "temperature": request.temperature,
+            }
+            
+            # Only include non-None parameters
+            if request.max_tokens is not None:
+                params["max_tokens"] = request.max_tokens
+            if request.top_p is not None:
+                params["top_p"] = request.top_p
+                
+            # Add any additional params
+            params.update(request.additional_params)
+            
+            # Call the API
+            response = self.client.chat.completions.create(**params)
             
             try:
                 json_response = json.loads(response.choices[0].message.content)
@@ -356,8 +416,8 @@ class LLMService:
     def generate(self, request: LLMRequest) -> str:
         """Generate a response using the specified provider"""
         provider = self._get_provider(
-            request.model_config.provider, 
-            request.model_config.api_key
+            request.llm_config.provider, 
+            request.llm_config.api_key
         )
         response = provider.generate(request)
         return response.content
@@ -365,8 +425,8 @@ class LLMService:
     def generate_structured(self, request: StructuredLLMRequest[T]) -> T:
         """Generate a structured response using the specified provider"""
         provider = self._get_provider(
-            request.model_config.provider, 
-            request.model_config.api_key
+            request.llm_config.provider, 
+            request.llm_config.api_key
         )
         return provider.generate_structured(request)
 
@@ -415,7 +475,7 @@ You must return a valid ThreeGroup structure with all required fields. The respo
         user_prompt=prompt,
         system_prompt="You are a 3D modeling expert. Generate precise Three.js structures based on descriptions.",
         response_model=ThreeGroup,
-        model_config=ModelConfig(
+        llm_config=LLMModelConfig(
             provider=provider,
             model_name=model_name
         ),
