@@ -1,0 +1,80 @@
+{
+    "title": "Caption Generator Test - Ethanol Synthesis",
+    "content": [
+      {
+        "timecode": "00:00:05",
+        "description": "Introduction to ethanol synthesis",
+        "caption": "Welcome to our demonstration of ethanol molecule synthesis. Today we'll be showing the step-by-step process of creating C₂H₅OH, commonly known as ethanol or drinking alcohol."
+      },
+      {
+        "timecode": "00:00:32",
+        "description": "Safety equipment preparation",
+        "caption": "Before beginning any chemical synthesis, we must ensure proper safety measures. We're using protective goggles, gloves, and working under a ventilated hood to prevent exposure to potentially harmful vapors."
+      },
+      {
+        "timecode": "00:01:15",
+        "description": "Starting materials introduction",
+        "caption": "For our ethanol synthesis, we'll be using ethylene (C₂H₄) as our starting material. We'll combine this with water (H₂O) in a process called hydration, using phosphoric acid as a catalyst."
+      },
+      {
+        "timecode": "00:02:03",
+        "description": "Reaction vessel setup",
+        "caption": "Here we're setting up our reaction vessel. We've added our phosphoric acid catalyst to the flask and are now carefully introducing our ethylene gas through this inlet tube."
+      },
+      {
+        "timecode": "00:03:27",
+        "description": "Temperature control explanation",
+        "caption": "The reaction requires precise temperature control. We're maintaining a temperature of 300°C and a pressure of 60-70 atmospheres to optimize the conversion of ethylene to ethanol."
+      },
+      {
+        "timecode": "00:04:52",
+        "description": "Reaction mechanism visualization",
+        "caption": "As the reaction proceeds, the phosphoric acid catalyst protonates the ethylene, creating a carbocation. Water then acts as a nucleophile, attacking the positively charged carbon atom to form ethanol."
+      },
+      {
+        "timecode": "00:06:18",
+        "description": "Reaction progress monitoring",
+        "caption": "We're monitoring the reaction progress using gas chromatography. This allows us to track the decreasing concentration of ethylene and the increasing formation of ethanol in real-time."
+      },
+      {
+        "timecode": "00:08:05",
+        "description": "Product separation",
+        "caption": "Now that our reaction is complete, we need to separate the ethanol from the reaction mixture. We'll use distillation to purify our product, taking advantage of ethanol's boiling point of 78.4°C."
+      },
+      {
+        "timecode": "00:10:30",
+        "description": "Distillation process",
+        "caption": "In our distillation setup, we're carefully heating the reaction mixture. The ethanol vaporizes first, travels through the condenser where it cools and returns to liquid form, and is collected in this separate flask."
+      },
+      {
+        "timecode": "00:12:45",
+        "description": "Product analysis",
+        "caption": "We're analyzing our final product using infrared spectroscopy. The characteristic OH stretch at around 3300 cm⁻¹ confirms the presence of the hydroxyl group in our ethanol molecule."
+      },
+      {
+        "timecode": "00:14:20",
+        "description": "Purity testing",
+        "caption": "To determine the purity of our synthesized ethanol, we're measuring its refractive index. Pure ethanol has a refractive index of 1.361 at 20°C. Our sample shows a reading of 1.358, indicating approximately 95% purity."
+      },
+      {
+        "timecode": "00:15:37",
+        "description": "Industrial applications discussion",
+        "caption": "While we've synthesized ethanol on a small scale for demonstration purposes, industrial production typically uses fermentation of sugars using yeast. However, this direct hydration method is used commercially for producing higher-grade ethanol for industrial applications."
+      },
+      {
+        "timecode": "00:16:55",
+        "description": "Summary of synthesis process",
+        "caption": "To summarize our ethanol synthesis: we've converted ethylene to ethanol through acid-catalyzed hydration, purified our product through distillation, and confirmed its identity and purity through analytical techniques."
+      },
+      {
+        "timecode": "00:17:40",
+        "description": "Environmental considerations",
+        "caption": "It's worth noting the environmental impact of different ethanol production methods. While our demonstration used petrochemical-derived ethylene, bioethanol production from renewable resources offers a more sustainable alternative."
+      },
+      {
+        "timecode": "00:18:25",
+        "description": "Conclusion",
+        "caption": "Thank you for watching our demonstration of ethanol synthesis. Understanding this process helps us appreciate the chemistry behind both industrial chemical production and the biochemical processes that occur in fermentation."
+      }
+    ]
+  }
