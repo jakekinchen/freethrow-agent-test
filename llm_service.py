@@ -1,18 +1,67 @@
 """
-LLM Service Module - Handles interactions with various LLM providers.
+LLM Service Module - Handles interactions with various LLM providers (OpenAI, Anthropic, Groq).
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional, TypeVar, Type, cast
+from typing import Dict, List, Optional, TypeVar, Type, Any, Union, Generic, Literal
 import os
 import json
+from enum import Enum
 from dataclasses import dataclass
 from dotenv import load_dotenv
-from pydantic import BaseModel
-from models import ThreeGroup
+from pydantic import BaseModel, Field
 
 # Load environment variables from .env file
 load_dotenv()
+
+# Type for the response model
+T = TypeVar('T', bound=BaseModel)
+
+class MessageRole(str, Enum):
+    """Standardized message roles across providers"""
+    SYSTEM = "system"
+    USER = "user"
+    ASSISTANT = "assistant"
+
+class Message(BaseModel):
+    """Standardized message format"""
+    role: MessageRole
+    content: str
+
+class ProviderType(str, Enum):
+    """Supported LLM providers"""
+    OPENAI = "openai"
+    ANTHROPIC = "anthropic"
+    GROQ = "groq"
+
+class ModelConfig(BaseModel):
+    """Configuration for an LLM model"""
+    provider: ProviderType
+    model_name: str
+    api_key: Optional[str] = None
+    
+    class Config:
+        use_enum_values = True
+
+class LLMRequest(BaseModel):
+    """Standard request structure for all LLM providers"""
+    system_prompt: Optional[str] = None
+    user_prompt: str
+    model_config: ModelConfig
+    temperature: float = 0.7
+    max_tokens: Optional[int] = None
+    top_p: Optional[float] = None
+    stream: bool = False
+    additional_params: Dict[str, Any] = Field(default_factory=dict)
+
+class ResponseFormat(BaseModel):
+    """Response format configuration"""
+    type: Literal["text", "json_object"] = "text"
+
+class StructuredLLMRequest(LLMRequest, Generic[T]):
+    """Request structure for structured output"""
+    response_model: Type[T]
+    response_format: ResponseFormat = ResponseFormat(type="json_object")
 
 @dataclass
 class LLMResponse:
@@ -25,37 +74,45 @@ class LLMProvider(ABC):
     """Abstract base class for LLM providers"""
     
     @abstractmethod
-    def generate(self, prompt: str, **kwargs) -> LLMResponse:
+    def generate(self, request: LLMRequest) -> LLMResponse:
         """Generate a response from the LLM"""
         pass
 
     @abstractmethod
-    def generate_structured(self, prompt: str, response_model: Type[BaseModel], **kwargs) -> BaseModel:
+    def generate_structured(self, request: StructuredLLMRequest[T]) -> T:
         """Generate a structured response from the LLM"""
         pass
 
 class OpenAIProvider(LLMProvider):
     """OpenAI-specific implementation"""
     
-    def __init__(self, api_key: Optional[str] = None, model: str = "o3-mini"):
+    def __init__(self, api_key: str):
         import openai
         self.client = openai.OpenAI(
-            api_key=api_key or os.getenv("OPENAI_API_KEY")
+            api_key=api_key
         )
-        self.model = model
 
-    def generate(self, prompt: str, **kwargs) -> LLMResponse:
+    def generate(self, request: LLMRequest) -> LLMResponse:
         """Generate a response using OpenAI's API"""
         try:
+            messages = []
+            if request.system_prompt:
+                messages.append({"role": "system", "content": request.system_prompt})
+            messages.append({"role": "user", "content": request.user_prompt})
+            
             response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[{"role": "user", "content": prompt}],
-                **kwargs
+                model=request.model_config.model_name,
+                messages=messages,
+                temperature=request.temperature,
+                max_tokens=request.max_tokens,
+                top_p=request.top_p,
+                stream=request.stream,
+                **request.additional_params
             )
             
             return LLMResponse(
                 content=response.choices[0].message.content,
-                model=self.model,
+                model=request.model_config.model_name,
                 usage={
                     "prompt_tokens": response.usage.prompt_tokens,
                     "completion_tokens": response.usage.completion_tokens,
@@ -65,48 +122,270 @@ class OpenAIProvider(LLMProvider):
         except Exception as e:
             raise Exception(f"OpenAI API error: {str(e)}")
 
-    def generate_structured(self, prompt: str, response_model: Type[BaseModel], **kwargs) -> BaseModel:
+    def generate_structured(self, request: StructuredLLMRequest[T]) -> T:
         """Generate a structured response using OpenAI's API"""
         try:
+            messages = []
+            if request.system_prompt:
+                messages.append({"role": "system", "content": request.system_prompt})
+            messages.append({"role": "user", "content": request.user_prompt})
+            
             response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[{"role": "user", "content": prompt}],
+                model=request.model_config.model_name,
+                messages=messages,
                 response_format={"type": "json_object"},
-                **kwargs
+                temperature=request.temperature,
+                max_tokens=request.max_tokens,
+                top_p=request.top_p,
+                stream=request.stream,
+                **request.additional_params
             )
             
             json_response = json.loads(response.choices[0].message.content)
-            return response_model.model_validate(json_response)
+            return request.response_model.model_validate(json_response)
         except Exception as e:
             raise Exception(f"OpenAI structured output error: {str(e)}")
+
+class AnthropicProvider(LLMProvider):
+    """Anthropic-specific implementation"""
+    
+    def __init__(self, api_key: str):
+        try:
+            import anthropic
+            self.client = anthropic.Anthropic(
+                api_key=api_key
+            )
+        except ImportError:
+            raise ImportError("Anthropic package is not installed. Install with 'pip install anthropic'")
+
+    def generate(self, request: LLMRequest) -> LLMResponse:
+        """Generate a response using Anthropic's API"""
+        try:
+            # Build messages format for Anthropic
+            messages = []
+            if request.system_prompt:
+                messages.append({"role": "system", "content": request.system_prompt})
+            messages.append({"role": "user", "content": request.user_prompt})
+            
+            response = self.client.messages.create(
+                model=request.model_config.model_name,
+                messages=messages,
+                temperature=request.temperature,
+                max_tokens=request.max_tokens or 1024,
+                **request.additional_params
+            )
+            
+            return LLMResponse(
+                content=response.content[0].text,
+                model=request.model_config.model_name,
+                usage={
+                    "input_tokens": response.usage.input_tokens,
+                    "output_tokens": response.usage.output_tokens,
+                    "total_tokens": response.usage.input_tokens + response.usage.output_tokens
+                }
+            )
+        except Exception as e:
+            raise Exception(f"Anthropic API error: {str(e)}")
+
+    def generate_structured(self, request: StructuredLLMRequest[T]) -> T:
+        """Generate a structured response using Anthropic's API"""
+        try:
+            # Add specific instructions for JSON format
+            json_instruction = """
+            You must respond with a valid JSON object that conforms to the specified schema.
+            Your entire response should be valid JSON without any additional text or explanation.
+            """
+            
+            system_prompt = request.system_prompt or ""
+            enhanced_system_prompt = system_prompt + json_instruction
+            
+            messages = [
+                {"role": "system", "content": enhanced_system_prompt},
+                {"role": "user", "content": request.user_prompt}
+            ]
+            
+            response = self.client.messages.create(
+                model=request.model_config.model_name,
+                messages=messages,
+                temperature=request.temperature,
+                max_tokens=request.max_tokens or 1024,
+                **request.additional_params
+            )
+            
+            # Try to parse JSON from the response
+            try:
+                json_response = json.loads(response.content[0].text)
+                return request.response_model.model_validate(json_response)
+            except json.JSONDecodeError:
+                # Attempt to extract JSON if it's wrapped in markdown or other text
+                import re
+                json_pattern = r'```(?:json)?\s*([\s\S]*?)\s*```'
+                match = re.search(json_pattern, response.content[0].text)
+                if match:
+                    json_str = match.group(1)
+                    json_response = json.loads(json_str)
+                    return request.response_model.model_validate(json_response)
+                else:
+                    raise Exception("Failed to parse JSON from Anthropic response")
+                
+        except Exception as e:
+            raise Exception(f"Anthropic structured output error: {str(e)}")
+
+class GroqProvider(LLMProvider):
+    """Groq-specific implementation"""
+    
+    def __init__(self, api_key: str):
+        try:
+            import groq
+            self.client = groq.Groq(
+                api_key=api_key
+            )
+        except ImportError:
+            raise ImportError("Groq package is not installed. Install with 'pip install groq'")
+
+    def generate(self, request: LLMRequest) -> LLMResponse:
+        """Generate a response using Groq's API"""
+        try:
+            messages = []
+            if request.system_prompt:
+                messages.append({"role": "system", "content": request.system_prompt})
+            messages.append({"role": "user", "content": request.user_prompt})
+            
+            response = self.client.chat.completions.create(
+                model=request.model_config.model_name,
+                messages=messages,
+                temperature=request.temperature,
+                max_tokens=request.max_tokens,
+                top_p=request.top_p,
+                stream=request.stream,
+                **request.additional_params
+            )
+            
+            return LLMResponse(
+                content=response.choices[0].message.content,
+                model=request.model_config.model_name,
+                usage={
+                    "prompt_tokens": response.usage.prompt_tokens,
+                    "completion_tokens": response.usage.completion_tokens,
+                    "total_tokens": response.usage.total_tokens
+                }
+            )
+        except Exception as e:
+            raise Exception(f"Groq API error: {str(e)}")
+
+    def generate_structured(self, request: StructuredLLMRequest[T]) -> T:
+        """Generate a structured response using Groq's API"""
+        try:
+            # Add instructions for JSON format
+            json_instruction = """
+            Return a valid JSON object that matches the required schema.
+            Your entire response should be valid JSON without any explanations.
+            """
+            
+            system_prompt = request.system_prompt or ""
+            enhanced_system_prompt = system_prompt + json_instruction
+            
+            messages = [
+                {"role": "system", "content": enhanced_system_prompt},
+                {"role": "user", "content": request.user_prompt}
+            ]
+            
+            response = self.client.chat.completions.create(
+                model=request.model_config.model_name,
+                messages=messages,
+                temperature=request.temperature,
+                max_tokens=request.max_tokens,
+                **request.additional_params
+            )
+            
+            try:
+                json_response = json.loads(response.choices[0].message.content)
+                return request.response_model.model_validate(json_response)
+            except json.JSONDecodeError:
+                # Try to extract JSON if it's wrapped in markdown
+                import re
+                json_pattern = r'```(?:json)?\s*([\s\S]*?)\s*```'
+                match = re.search(json_pattern, response.choices[0].message.content)
+                if match:
+                    json_str = match.group(1)
+                    json_response = json.loads(json_str)
+                    return request.response_model.model_validate(json_response)
+                else:
+                    raise Exception("Failed to parse JSON from Groq response")
+                
+        except Exception as e:
+            raise Exception(f"Groq structured output error: {str(e)}")
 
 class LLMService:
     """Main service class for handling LLM interactions"""
     
-    def __init__(self, provider: Optional[LLMProvider] = None):
-        """Initialize with a specific provider, defaults to OpenAI"""
-        self.provider = provider or OpenAIProvider()
+    def __init__(self):
+        """Initialize the service"""
+        self._providers = {}
     
-    def generate(self, prompt: str, **kwargs) -> str:
-        """Generate a response using the configured provider"""
-        response = self.provider.generate(prompt, **kwargs)
+    def _get_provider(self, provider_type: ProviderType, api_key: Optional[str] = None) -> LLMProvider:
+        """Get or create a provider instance"""
+        # Create a unique provider key that includes the API key to handle multiple API keys
+        provider_key = f"{provider_type}_{api_key}"
+        
+        if provider_key not in self._providers:
+            if provider_type == ProviderType.OPENAI:
+                # Use provided API key or load from .env
+                api_key = api_key or os.getenv("OPENAI_API_KEY")
+                if not api_key:
+                    raise ValueError("No OpenAI API key provided in request or .env file")
+                self._providers[provider_key] = OpenAIProvider(api_key)
+                
+            elif provider_type == ProviderType.ANTHROPIC:
+                api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
+                if not api_key:
+                    raise ValueError("No Anthropic API key provided in request or .env file")
+                self._providers[provider_key] = AnthropicProvider(api_key)
+                
+            elif provider_type == ProviderType.GROQ:
+                api_key = api_key or os.getenv("GROQ_API_KEY")
+                if not api_key:
+                    raise ValueError("No Groq API key provided in request or .env file")
+                self._providers[provider_key] = GroqProvider(api_key)
+                
+            else:
+                raise ValueError(f"Unsupported provider: {provider_type}")
+        
+        return self._providers[provider_key]
+    
+    def generate(self, request: LLMRequest) -> str:
+        """Generate a response using the specified provider"""
+        provider = self._get_provider(
+            request.model_config.provider, 
+            request.model_config.api_key
+        )
+        response = provider.generate(request)
         return response.content
 
-    def generate_structured(self, prompt: str, response_model: Type[BaseModel], **kwargs) -> BaseModel:
-        """Generate a structured response using the configured provider"""
-        return self.provider.generate_structured(prompt, response_model, **kwargs)
+    def generate_structured(self, request: StructuredLLMRequest[T]) -> T:
+        """Generate a structured response using the specified provider"""
+        provider = self._get_provider(
+            request.model_config.provider, 
+            request.model_config.api_key
+        )
+        return provider.generate_structured(request)
 
-    def generate_three_group(self, description: str, **kwargs) -> ThreeGroup:
-        """Generate a Three.js group from a description.
-        
-        Args:
-            description: Natural language description of the 3D object to generate
-            **kwargs: Additional arguments to pass to the LLM
+# Example usage with ThreeGroup from models.py 
+from models import ThreeGroup
+
+def generate_three_group(service: LLMService, description: str, provider: ProviderType, model_name: str) -> ThreeGroup:
+    """Generate a Three.js group from a description using specified provider.
+    
+    Args:
+        service: LLMService instance
+        description: Natural language description of the 3D object to generate
+        provider: Which LLM provider to use
+        model_name: The specific model name to use
             
-        Returns:
-            ThreeGroup: A validated Three.js group containing the described object
-        """
-        prompt = f"""Create a Three.js group that represents the following object: {description}
+    Returns:
+        ThreeGroup: A validated Three.js group containing the described object
+    """
+    prompt = f"""Create a Three.js group that represents the following object: {description}
 
 The group should:
 - Have a descriptive name
@@ -132,5 +411,15 @@ You must return a valid ThreeGroup structure with all required fields. The respo
     - transparent (bool): Whether material is transparent
     - shininess (float, optional): For PhongMaterial"""
 
-        result = self.generate_structured(prompt, ThreeGroup, **kwargs)
-        return cast(ThreeGroup, result) 
+    request = StructuredLLMRequest(
+        user_prompt=prompt,
+        system_prompt="You are a 3D modeling expert. Generate precise Three.js structures based on descriptions.",
+        response_model=ThreeGroup,
+        model_config=ModelConfig(
+            provider=provider,
+            model_name=model_name
+        ),
+        temperature=0.2  # Low temperature for more deterministic output
+    )
+
+    return service.generate_structured(request)
