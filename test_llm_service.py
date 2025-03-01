@@ -59,7 +59,7 @@ def read_image_as_base64(image_path):
 
 def test_openai_structured():
     """Test OpenAI's o3-mini model with structured boolean output"""
-    print("\n===== Testing OpenAI gpt-3.5-turbo with structured boolean output =====")
+    print("\n===== Testing OpenAI    with structured boolean output =====")
     
     llm_service = LLMService()
     
@@ -81,7 +81,7 @@ Where:
         system_prompt="You are a fact-checking AI. Determine if statements are true or false. Always respond with JSON exactly matching the requested format.",
         llm_config=LLMModelConfig(
             provider=ProviderType.OPENAI,
-            model_name="gpt-3.5-turbo"  # Using a model that supports temperature parameter
+            model_name="o3-mini"  # Using a model that supports temperature parameter
         ),
         response_model=BooleanResponse,
         temperature=0.1  # Low temperature for more deterministic output
