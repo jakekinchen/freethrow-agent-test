@@ -1003,6 +1003,19 @@
             requestAnimationFrame(animate);
             
             const elapsedTime = clock.getElapsedTime();
+
+            // Find current caption
+            let currentCaption = captions[0];
+            for (let i = captions.length - 1; i >= 0; i--) {
+                if (elapsedTime >= captions[i].time) {
+                    currentCaption = captions[i];
+                    break;
+                }
+            }
+
+            // Update caption
+            infoElement.textContent = currentCaption.text;
+            infoElement.classList.remove('hidden');
             
             // Update star shader uniforms and animation
             starLayers.forEach((layer, index) => {
@@ -1014,18 +1027,9 @@
                 layer.position.y = Math.sin(elapsedTime * 0.1 + index) * 0.5;
             });
             
-            // Find current caption
-            let currentCaption = captions[0];
-            for (let i = captions.length - 1; i >= 0; i--) {
-                if (elapsedTime >= captions[i].time) {
-                    currentCaption = captions[i];
-                    break;
-                }
-            }
             
-            // Update caption
-            infoElement.textContent = currentCaption.text;
-            infoElement.classList.remove('hidden');
+            
+            
             
             // Update corona shader uniforms with more dynamic values
             const pulseEffect = Math.sin(elapsedTime * 0.5) * 0.2 + 1.0;
