@@ -1,0 +1,1446 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Solar Wind Demonstration</title>
+    <style>
+        body { margin: 0; overflow: hidden; }
+        #info {
+            position: absolute;
+            bottom: 20px;
+            width: 100%;
+            text-align: center;
+            color: white;
+            font-family: Arial, sans-serif;
+            font-size: 18px;
+            background-color: rgba(0, 0, 0, 0.5);
+            padding: 10px;
+            transition: opacity 1s ease-in-out;
+        }
+        .hidden {
+            opacity: 0;
+        }
+        #loading {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            font-family: Arial, sans-serif;
+            font-size: 24px;
+            background-color: rgba(0, 0, 0, 0.7);
+            padding: 20px;
+            border-radius: 10px;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="info">Welcome to the Solar Wind Demonstration</div>
+    <div id="loading">Loading textures...</div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/FXAAShader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
+    <script>
+        // Scene setup
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setClearColor(0x000000);
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1;
+        document.body.appendChild(renderer.domElement);
+
+        // Post processing setup
+        const composer = new THREE.EffectComposer(renderer);
+        const renderPass = new THREE.RenderPass(scene, camera);
+        composer.addPass(renderPass);
+
+        const bloomPass = new THREE.UnrealBloomPass(
+            new THREE.Vector2(window.innerWidth, window.innerHeight),
+            1.5,    // strength
+            0.4,    // radius
+            0.85    // threshold
+        );
+        composer.addPass(bloomPass);
+        
+        // Add FXAA pass for anti-aliasing
+        const fxaaPass = new THREE.ShaderPass(THREE.FXAAShader);
+        fxaaPass.material.uniforms['resolution'].value.x = 1 / (window.innerWidth * renderer.getPixelRatio());
+        fxaaPass.material.uniforms['resolution'].value.y = 1 / (window.innerHeight * renderer.getPixelRatio());
+        composer.addPass(fxaaPass);
+        
+        // Loading manager setup
+        const loadingManager = new THREE.LoadingManager();
+        const loadingElement = document.getElementById('loading');
+        
+        loadingManager.onStart = () => {
+            loadingElement.style.display = 'block';
+        };
+        
+        loadingManager.onLoad = () => {
+            loadingElement.style.display = 'none';
+        };
+        
+        loadingManager.onError = (url) => {
+            console.error('Error loading texture:', url);
+        };
+
+        // Star shader
+        const starVertexShader = `
+            attribute float size;
+            varying vec3 vColor;
+            uniform float time;
+            
+            void main() {
+                vColor = color;
+                vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+                
+                // Calculate distance-based size attenuation
+                float distance = length(mvPosition.xyz);
+                float sizeMod = size * (900.0 / distance);
+                
+                // Add twinkling effect
+                float twinkle = sin(time * 3.0 + position.x * 0.5 + position.y * 0.3 + position.z * 0.2) * 0.5 + 0.5;
+                gl_PointSize = sizeMod * (0.8 + twinkle * 0.4);
+                
+                gl_Position = projectionMatrix * mvPosition;
+            }
+        `;
+
+        const starFragmentShader = `
+            varying vec3 vColor;
+            
+            void main() {
+                // Create circular point
+                vec2 center = gl_PointCoord - vec2(0.5);
+                float dist = length(center);
+                if (dist > 0.5) discard;
+                
+                // Add soft edge and center brightness
+                float strength = 1.0 - dist * 2.0;
+                strength = pow(strength, 1.5);
+                
+                gl_FragColor = vec4(vColor, strength);
+            }
+        `;
+
+        // Create starfield with custom shader
+        function createStarField(count, radius, size, opacity) {
+            const vertices = [];
+            const colors = [];
+            const sizes = [];
+            
+            for (let i = 0; i < count; i++) {
+                // Random spherical coordinates
+                const theta = Math.random() * Math.PI * 2;
+                const phi = Math.acos((Math.random() * 2) - 1);
+                const r = radius;
+                
+                // Convert to Cartesian coordinates
+                const x = r * Math.sin(phi) * Math.cos(theta);
+                const y = r * Math.sin(phi) * Math.sin(theta);
+                const z = r * Math.cos(phi);
+                
+                vertices.push(x, y, z);
+                
+                // Random star color (white to slight blue)
+                const starColor = new THREE.Color();
+                starColor.setHSL(0.6, Math.random() * 0.2, 0.9 + Math.random() * 0.1);
+                colors.push(starColor.r, starColor.g, starColor.b);
+                
+                // Random size variation
+                sizes.push(size * (0.8 + Math.random() * 0.4));
+            }
+            
+            const geometry = new THREE.BufferGeometry();
+            geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+            geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+            geometry.setAttribute('size', new THREE.Float32BufferAttribute(sizes, 1));
+            
+            const material = new THREE.ShaderMaterial({
+                uniforms: {
+                    time: { value: 0 }
+                },
+                vertexShader: starVertexShader,
+                fragmentShader: starFragmentShader,
+                transparent: true,
+                depthWrite: false,
+                vertexColors: true
+            });
+            
+            return new THREE.Points(geometry, material);
+        }
+        
+        // Create multiple star layers
+        const starLayers = [
+            createStarField(2000, 400, 2.0, 0.8),  // Far layer
+            createStarField(1500, 300, 1.5, 0.6),  // Middle layer
+            createStarField(1000, 200, 1.2, 0.4)   // Near layer
+        ];
+        
+        starLayers.forEach(layer => scene.add(layer));
+
+        // Texture loader
+        const textureLoader = new THREE.TextureLoader(loadingManager);
+
+        // Load textures with new URLs and better fallbacks
+        const sunTexture = textureLoader.load(
+            'https://raw.githubusercontent.com/homer-jay/solar-system-textures/refs/heads/master/sun.jpg',
+            function(texture) {
+                console.log("Successfully loaded sun texture");
+            },
+            undefined,
+            function(err) {
+                console.error('Error loading sun texture from primary source, trying backup...', err);
+                // Try NASA texture as backup
+                textureLoader.load(
+                    'https://svs.gsfc.nasa.gov/vis/a000000/a004700/a004781/frames/730x730_1x1_30p/sun.jpg',
+                    function(backupTexture) {
+                        console.log("Successfully loaded backup sun texture");
+                        sunMaterial.map = backupTexture;
+                        sunMaterial.needsUpdate = true;
+                    },
+                    undefined,
+                    function(err2) {
+                        console.error('Error loading backup sun texture, using fallback canvas:', err2);
+                        // Create a fallback procedural texture
+                        const canvas = document.createElement('canvas');
+                        canvas.width = 512;
+                        canvas.height = 512;
+                        const ctx = canvas.getContext('2d');
+                        
+                        // Create radial gradient for sun appearance
+                        const gradient = ctx.createRadialGradient(
+                            256, 256, 0,   // inner circle center and radius
+                            256, 256, 256  // outer circle center and radius
+                        );
+                        gradient.addColorStop(0, '#ffffa0');    // bright center
+                        gradient.addColorStop(0.5, '#ffcc50');  // mid yellow-orange
+                        gradient.addColorStop(0.8, '#ff8c20');  // darker orange
+                        gradient.addColorStop(1, '#ff6000');    // reddish edge
+                        
+                        // Fill background
+                        ctx.fillStyle = gradient;
+                        ctx.fillRect(0, 0, 512, 512);
+                        
+                        // Add solar granulation and flares
+                        for (let i = 0; i < 2000; i++) {
+                            const x = Math.random() * 512;
+                            const y = Math.random() * 512;
+                            const size = 2 + Math.random() * 5;
+                            const alpha = Math.random() * 0.3;
+                            
+                            // Vary color from center to edge
+                            const distFromCenter = Math.sqrt(Math.pow(x - 256, 2) + Math.pow(y - 256, 2)) / 256;
+                            const r = 255;
+                            const g = Math.floor(240 - distFromCenter * 80);
+                            const b = Math.floor(160 - distFromCenter * 160);
+                            
+                            ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${alpha})`;
+                            ctx.beginPath();
+                            ctx.arc(x, y, size, 0, Math.PI * 2);
+                            ctx.fill();
+                        }
+                        
+                        sunMaterial.map = new THREE.CanvasTexture(canvas);
+                        sunMaterial.needsUpdate = true;
+                    }
+                );
+            }
+        );
+
+        const earthTexture = textureLoader.load(
+            'https://raw.githubusercontent.com/mrdoob/three.js/dev/examples/textures/planets/earth_atmos_2048.jpg',
+            undefined,
+            undefined,
+            function(err) {
+                console.error('Error loading earth texture:', err);
+                // Create a simple earth texture
+                const canvas = document.createElement('canvas');
+                canvas.width = 512;
+                canvas.height = 256;
+                const ctx = canvas.getContext('2d');
+                
+                // Ocean
+                ctx.fillStyle = '#0077be';
+                ctx.fillRect(0, 0, 512, 256);
+                
+                // Add continents
+                ctx.fillStyle = '#228b22';
+                for (let i = 0; i < 7; i++) {
+                    ctx.beginPath();
+                    const x = Math.random() * 512;
+                    const y = Math.random() * 256;
+                    const size = 30 + Math.random() * 50;
+                    ctx.arc(x, y, size, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                
+                earthMaterial.map = new THREE.CanvasTexture(canvas);
+                earthMaterial.needsUpdate = true;
+            }
+        );
+
+        const earthNormalMap = textureLoader.load(
+            'https://raw.githubusercontent.com/mrdoob/three.js/dev/examples/textures/planets/earth_normal_2048.jpg',
+            undefined,
+            undefined,
+            function(err) {
+                console.error('Error loading earth normal map:', err);
+                // Create a simple normal map
+                const canvas = document.createElement('canvas');
+                canvas.width = 256;
+                canvas.height = 256;
+                const ctx = canvas.getContext('2d');
+                ctx.fillStyle = '#808080';
+                ctx.fillRect(0, 0, 256, 256);
+                earthMaterial.normalMap = new THREE.CanvasTexture(canvas);
+                earthMaterial.needsUpdate = true;
+            }
+        );
+
+        const earthSpecularMap = textureLoader.load(
+            'https://raw.githubusercontent.com/mrdoob/three.js/dev/examples/textures/planets/earth_specular_2048.jpg',
+            undefined,
+            undefined,
+            function(err) {
+                console.error('Error loading earth specular map:', err);
+                // Create a simple specular map
+                const canvas = document.createElement('canvas');
+                canvas.width = 256;
+                canvas.height = 256;
+                const ctx = canvas.getContext('2d');
+                ctx.fillStyle = '#404040';
+                ctx.fillRect(0, 0, 256, 256);
+                earthMaterial.specularMap = new THREE.CanvasTexture(canvas);
+                earthMaterial.needsUpdate = true;
+            }
+        );
+
+        const earthCloudsTexture = textureLoader.load(
+            'https://raw.githubusercontent.com/mrdoob/three.js/dev/examples/textures/planets/earth_clouds_1024.png',
+            undefined,
+            undefined,
+            function(err) {
+                console.error('Error loading earth clouds texture:', err);
+                // Create a procedural cloud texture
+                const canvas = document.createElement('canvas');
+                canvas.width = 512;
+                canvas.height = 256;
+                const ctx = canvas.getContext('2d');
+                
+                // Clear background
+                ctx.fillStyle = 'black';
+                ctx.fillRect(0, 0, 512, 256);
+                
+                // Add cloud patches
+                for (let i = 0; i < 100; i++) {
+                    const x = Math.random() * 512;
+                    const y = Math.random() * 256;
+                    const size = 5 + Math.random() * 15;
+                    const alpha = Math.random() * 0.5;
+                    
+                    ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
+                    ctx.beginPath();
+                    ctx.arc(x, y, size, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                
+                cloudMaterial.map = new THREE.CanvasTexture(canvas);
+                cloudMaterial.needsUpdate = true;
+            }
+        );
+        
+        // Lighting
+        const ambientLight = new THREE.AmbientLight(0x333333);
+        scene.add(ambientLight);
+        
+        const sunLight = new THREE.PointLight(0xffffff, 2, 1000);
+        scene.add(sunLight);
+        
+        // Sun
+        const sunGeometry = new THREE.SphereGeometry(5, 64, 64);
+        const sunMaterial = new THREE.MeshPhongMaterial({ 
+            map: sunTexture,
+            color: 0xffff80,
+            emissive: 0xffff00,
+            emissiveIntensity: 1.2,
+            shininess: 0
+        });
+        const sun = new THREE.Mesh(sunGeometry, sunMaterial);
+        scene.add(sun);
+        
+        // Corona shader
+        const coronaVertexShader = `
+            varying vec3 vWorldPosition;
+            varying vec3 vNormal;
+            varying vec2 vUv;
+            
+            void main() {
+                vUv = uv;
+                vNormal = normalize(normalMatrix * normal);
+                vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+                vWorldPosition = worldPosition.xyz;
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }
+        `;
+
+        const coronaFragmentShader = `
+            varying vec3 vWorldPosition;
+            varying vec3 vNormal;
+            varying vec2 vUv;
+            
+            uniform float time;
+            uniform vec3 sunColor;
+            
+            // Noise functions
+            float hash(float n) {
+                return fract(sin(n) * 43758.5453);
+            }
+            
+            float noise(vec3 x) {
+                vec3 p = floor(x);
+                vec3 f = fract(x);
+                f = f * f * (3.0 - 2.0 * f);
+                float n = p.x + p.y * 157.0 + 113.0 * p.z;
+                
+                float a = mix(hash(n + 0.0), hash(n + 1.0), f.x);
+                float b = mix(hash(n + 157.0), hash(n + 158.0), f.x);
+                float c = mix(hash(n + 113.0), hash(n + 114.0), f.x);
+                float d = mix(hash(n + 270.0), hash(n + 271.0), f.x);
+                
+                float e = mix(a, b, f.y);
+                float g = mix(c, d, f.y);
+                
+                return mix(e, g, f.z);
+            }
+            
+            float fbm(vec3 p) {
+                float f = 0.0;
+                float amp = 0.5;
+                for(int i = 0; i < 5; i++) {
+                    f += amp * noise(p);
+                    p *= 2.0;
+                    amp *= 0.5;
+                }
+                return f;
+            }
+            
+            void main() {
+                // Calculate view direction
+                vec3 viewDirection = normalize(vWorldPosition - cameraPosition);
+                float viewDot = abs(dot(viewDirection, vNormal));
+                
+                // Create base corona shape
+                float intensity = pow(1.0 - viewDot, 2.0);
+                
+                // Add animated noise patterns
+                vec3 noiseCoord = vWorldPosition * 0.5 + vec3(0.0, time * 0.1, 0.0);
+                float noise = fbm(noiseCoord);
+                
+                // Create dynamic streaks
+                float streak = pow(noise, 3.0) * intensity;
+                
+                // Add time-based pulsing
+                float pulse = sin(time * 0.5) * 0.5 + 0.5;
+                
+                // Combine effects
+                float corona = intensity * (1.0 + streak + pulse * 0.2);
+                
+                // Color gradient from center to edge
+                vec3 innerColor = sunColor;
+                vec3 outerColor = vec3(1.0, 0.6, 0.1);
+                vec3 finalColor = mix(innerColor, outerColor, intensity);
+                
+                // Apply final color and opacity
+                gl_FragColor = vec4(finalColor, corona * 0.5);
+            }
+        `;
+
+        // Create corona mesh with shader material
+        const coronaGeometry = new THREE.SphereGeometry(5.8, 64, 64);
+        const coronaMaterial = new THREE.ShaderMaterial({
+            uniforms: {
+                time: { value: 0 },
+                sunColor: { value: new THREE.Color(0xffff80) }
+            },
+            vertexShader: coronaVertexShader,
+            fragmentShader: coronaFragmentShader,
+            transparent: true,
+            side: THREE.DoubleSide,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false
+        });
+        
+        const corona = new THREE.Mesh(coronaGeometry, coronaMaterial);
+        scene.add(corona);
+
+        // Create outer corona layer with different scale and parameters
+        const outerCoronaGeometry = new THREE.SphereGeometry(7.0, 64, 64);
+        const outerCoronaMaterial = coronaMaterial.clone();
+        outerCoronaMaterial.uniforms = {
+            time: { value: 0 },
+            sunColor: { value: new THREE.Color(0xff8800) }
+        };
+        const outerCorona = new THREE.Mesh(outerCoronaGeometry, outerCoronaMaterial);
+        scene.add(outerCorona);
+        
+        // Earth
+        const earthGeometry = new THREE.SphereGeometry(1, 32, 32);
+        const earthMaterial = new THREE.MeshPhongMaterial({ 
+            map: earthTexture,
+            normalMap: earthNormalMap,
+            specularMap: earthSpecularMap,
+            specular: new THREE.Color(0x333333),
+            shininess: 25
+        });
+        const earth = new THREE.Mesh(earthGeometry, earthMaterial);
+        earth.position.set(30, 0, 0);
+        scene.add(earth);
+
+        // Earth clouds
+        const cloudGeometry = new THREE.SphereGeometry(1.02, 32, 32);
+        const cloudMaterial = new THREE.MeshPhongMaterial({
+            map: earthCloudsTexture,
+            transparent: true,
+            opacity: 0.8
+        });
+        const clouds = new THREE.Mesh(cloudGeometry, cloudMaterial);
+        clouds.position.set(30, 0, 0);
+        scene.add(clouds);
+        
+        // Earth's magnetic field lines
+        const magneticFieldGroup = new THREE.Group();
+        scene.add(magneticFieldGroup);
+        
+        function createMagneticFieldLine(startAngle, endAngle, radius, segments, color, thickness) {
+            const points = [];
+            for (let i = 0; i <= segments; i++) {
+                const angle = startAngle + (endAngle - startAngle) * (i / segments);
+                
+                // Create a proper dipole field line shape
+                // This equation creates the classic magnetic dipole shape
+                const t = (angle - startAngle) / (endAngle - startAngle); // 0 to 1
+                const factorR = 0.8 + Math.sin(t * Math.PI) * 0.6; // Adjust radius along the path
+                
+                const adjustedRadius = radius * factorR;
+                
+                const x = Math.cos(angle) * adjustedRadius;
+                const y = Math.sin(angle) * adjustedRadius;
+                points.push(new THREE.Vector3(x, y, 0));
+            }
+            
+            const geometry = new THREE.BufferGeometry().setFromPoints(points);
+            const material = new THREE.LineBasicMaterial({ 
+                color: color,
+                transparent: true,
+                opacity: 0.7,
+                linewidth: thickness
+            });
+            return new THREE.Line(geometry, material);
+        }
+        
+        // Create more realistic magnetic field lines
+        for (let i = 0; i < 18; i++) {
+            // Vary starting and ending angles for more natural appearance
+            const offset = (i % 4) * 0.02;
+            
+            // Calculate radius based on position - closer to poles have smaller radius
+            const baseRadius = 1.2; // Start just above Earth surface
+            const maxExtraRadius = 2.2; // How far field lines extend
+            const spacing = Math.sin((i / 18) * Math.PI); // Create denser lines at poles
+            
+            const line = createMagneticFieldLine(
+                Math.PI * (0.15 - offset), 
+                Math.PI * (0.85 + offset), 
+                baseRadius + (spacing * maxExtraRadius), 
+                60, 
+                new THREE.Color(0.1, 0.4 + (i/36), 0.9),
+                i < 9 ? 2 : 1  // Make the inner lines thicker
+            );
+            
+            // Position is now relative to Earth
+            line.rotation.y = i * (Math.PI / 9);
+            magneticFieldGroup.add(line);
+        }
+        
+        // Fix magnetic field to be properly aligned with Earth
+        // We don't want to add it as a child of Earth directly because that would make it rotate with Earth
+        scene.add(magneticFieldGroup);
+        magneticFieldGroup.position.set(30, 0, 0); // Same position as Earth
+        
+        // Set rotation to align with Earth's axis - fixed in place
+        magneticFieldGroup.rotation.z = Math.PI/2; // Align with north-south pole
+        magneticFieldGroup.rotation.x = Math.PI/12; // Slight tilt like Earth's magnetic field
+        
+        // Solar Wind Particles
+        const particlesGroup = new THREE.Group();
+        scene.add(particlesGroup);
+        
+        const particlesCount = 5000; // Substantially increased for much better solar wind visibility
+        const particlePositions = new Float32Array(particlesCount * 3);
+        const particleVelocities = new Float32Array(particlesCount * 3);
+        const particleSizes = new Float32Array(particlesCount);
+        const particleColors = new Float32Array(particlesCount * 3);
+        
+        // Magnetosphere parameters
+        const earthPos = new THREE.Vector3(30, 0, 0);
+        const magnetosphereCenter = earthPos;
+        const bowShockStandoff = 3; // Distance from Earth to bow shock nose
+        const magnetopauseStandoff = 2; // Distance from Earth to magnetopause nose
+        
+        function calculateMagneticFieldStrength(position) {
+            // Calculate distance from Earth's center
+            const distanceFromEarth = position.distanceTo(earthPos);
+            
+            // Basic dipole field strength (falls off as 1/r³)
+            const fieldStrength = 1.0 / Math.pow(distanceFromEarth, 3);
+            
+            return fieldStrength;
+        }
+        
+        function isBehindBowShock(position) {
+            // Convert to Earth-centered coordinates
+            const relativePos = position.clone().sub(earthPos);
+            const x = relativePos.x;
+            const r = Math.sqrt(relativePos.y * relativePos.y + relativePos.z * relativePos.z);
+            
+            // Bow shock shape parameters
+            const L = bowShockStandoff;
+            const epsilon = 1.5; // Eccentricity
+            
+            // Bow shock shape equation: x = L * (1 - r²/(epsilon * L)²)
+            const bowShockX = L * (1 - (r * r)/(epsilon * L * epsilon * L));
+            
+            return x < bowShockX;
+        }
+        
+        function calculateDeflection(position, velocity) {
+            const relativePos = position.clone().sub(earthPos);
+            const distanceFromEarth = relativePos.length();
+            
+            // Calculate magnetic field influence
+            const fieldStrength = calculateMagneticFieldStrength(position);
+            
+            // Bow shock and magnetopause effects
+            if (isBehindBowShock(position)) {
+                // Slow down and heat up particles in bow shock region
+                const slowdownFactor = 0.7;
+                velocity.multiplyScalar(slowdownFactor);
+                
+                // Deflect around magnetosphere
+                const normal = relativePos.clone().normalize();
+                const deflectionStrength = 0.1 / Math.max(0.1, Math.pow(distanceFromEarth - magnetopauseStandoff, 2));
+                velocity.sub(normal.multiplyScalar(deflectionStrength));
+                
+                // Add some turbulence in the bow shock region
+                velocity.x += (Math.random() - 0.5) * 0.02;
+                velocity.y += (Math.random() - 0.5) * 0.02;
+                velocity.z += (Math.random() - 0.5) * 0.02;
+                
+                return true; // Particle is affected by bow shock
+            }
+            
+            return false; // Particle is in regular solar wind
+        }
+        
+        function initializeParticle(index) {
+            // Decide whether to create particles near the sun or distributed along the way to Earth
+            // Increase distribution along Sun-Earth line for better visibility
+            const initialDistribution = Math.random();
+            
+            if (initialDistribution < 0.2) {
+                // Initialize particle position in a disk around the sun
+                const radius = 6 + Math.random() * 2;
+                const theta = Math.random() * Math.PI * 2;
+                const phi = (Math.random() - 0.5) * Math.PI * 0.5; // Concentrate particles in ecliptic plane
+                
+                const x = radius * Math.cos(phi) * Math.cos(theta);
+                const y = radius * Math.sin(phi);
+                const z = radius * Math.cos(phi) * Math.sin(theta);
+                
+                particlePositions[index * 3] = x;
+                particlePositions[index * 3 + 1] = y;
+                particlePositions[index * 3 + 2] = z;
+                
+                // Initialize velocity (mainly radial with small random components)
+                const baseSpeed = 0.1 + Math.random() * 0.05;
+                const position = new THREE.Vector3(x, y, z);
+                const direction = position.normalize();
+                
+                particleVelocities[index * 3] = direction.x * baseSpeed;
+                particleVelocities[index * 3 + 1] = direction.y * baseSpeed;
+                particleVelocities[index * 3 + 2] = direction.z * baseSpeed;
+                
+                // Initialize size based on distance from sun - much larger sizes for better visibility
+                const distanceFromSun = Math.sqrt(x * x + y * y + z * z);
+                particleSizes[index] = 0.5 * (1 - Math.min(1, (distanceFromSun - 6) / 24)) + 0.15;
+                
+                // Initialize color (yellow near sun, blue-white further out)
+                const colorFactor = Math.min(1, (distanceFromSun - 6) / 24);
+                particleColors[index * 3] = 1.0; // R
+                particleColors[index * 3 + 1] = 0.8 + colorFactor * 0.2; // G
+                particleColors[index * 3 + 2] = 0.3 + colorFactor * 0.7; // B
+            } else {
+                // Distribute particles along the path from Sun to Earth
+                // This ensures particles are visible immediately at start
+                const distanceRatio = Math.random(); // 0 to 1
+                const sunToEarthDistance = 30;
+                
+                // Position somewhere between sun and earth
+                const distanceFromSun = 6 + (distanceRatio * (sunToEarthDistance - 8));
+                
+                // Determine if this particle should be in the main Sun-Earth flow or more scattered
+                const inMainFlow = Math.random() < 0.7;
+                
+                // Distance from the main Sun-Earth axis
+                let perpSpread;
+                if (inMainFlow) {
+                    // Keep closer to the Sun-Earth axis for better visibility of flow
+                    perpSpread = 1 + Math.random() * 3;
+                } else {
+                    // Some particles more scattered for natural appearance
+                    perpSpread = 3 + Math.random() * 6;
+                }
+                
+                const theta = Math.random() * Math.PI * 2;
+                
+                const x = distanceFromSun;
+                const y = Math.cos(theta) * perpSpread * (distanceRatio * 0.3 + 0.3);
+                const z = Math.sin(theta) * perpSpread * (distanceRatio * 0.3 + 0.3);
+                
+                particlePositions[index * 3] = x;
+                particlePositions[index * 3 + 1] = y;
+                particlePositions[index * 3 + 2] = z;
+                
+                // Initialize velocity (mainly radial with small random components)
+                const baseSpeed = 0.1 + Math.random() * 0.05;
+                const direction = new THREE.Vector3(1, y/(x*10), z/(x*10)).normalize();
+                
+                particleVelocities[index * 3] = direction.x * baseSpeed;
+                particleVelocities[index * 3 + 1] = direction.y * baseSpeed; 
+                particleVelocities[index * 3 + 2] = direction.z * baseSpeed;
+                
+                // Initialize size based on distance - much larger sizes for better visibility
+                particleSizes[index] = 0.5 * (1 - Math.min(1, (distanceFromSun - 6) / 24)) + 0.15;
+                
+                // Initialize color (yellow near sun, blue-white further out)
+                const colorFactor = Math.min(1, (distanceFromSun - 6) / 24);
+                particleColors[index * 3] = 1.0; // R
+                particleColors[index * 3 + 1] = 0.8 + colorFactor * 0.2; // G
+                particleColors[index * 3 + 2] = 0.3 + colorFactor * 0.7; // B
+            }
+        }
+        
+        // Initialize all particles
+        for (let i = 0; i < particlesCount; i++) {
+            initializeParticle(i);
+        }
+        
+        const particlesGeometry = new THREE.BufferGeometry();
+        particlesGeometry.setAttribute('position', new THREE.BufferAttribute(particlePositions, 3));
+        particlesGeometry.setAttribute('size', new THREE.BufferAttribute(particleSizes, 1));
+        particlesGeometry.setAttribute('color', new THREE.BufferAttribute(particleColors, 3));
+        
+        // Custom shader for particles
+        const particleVertexShader = `
+            attribute float size;
+            varying vec3 vColor;
+            uniform float time;
+            
+            void main() {
+                vColor = color;
+                vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+                
+                // Increase the size scaling factor for more visibility (300 -> 450)
+                float distance = length(mvPosition.xyz);
+                
+                // Add subtle pulsing for more visual prominence
+                float pulseFactor = sin(time * 2.0 + position.x * 0.1) * 0.1 + 1.0;
+                
+                gl_PointSize = size * (450.0 / distance) * pulseFactor;
+                gl_Position = projectionMatrix * mvPosition;
+            }
+        `;
+        
+        const particleFragmentShader = `
+            varying vec3 vColor;
+            
+            void main() {
+                vec2 center = gl_PointCoord - vec2(0.5);
+                float dist = length(center);
+                if (dist > 0.5) discard;
+                
+                // Create a more intense glow effect with sharper center
+                float strength = pow(1.0 - dist * 2.0, 1.3);
+                
+                // Make colors more vibrant
+                vec3 glowColor = vColor * 1.2; // Increase color intensity
+                
+                gl_FragColor = vec4(glowColor, strength);
+            }
+        `;
+        
+        const particlesMaterial = new THREE.ShaderMaterial({
+            uniforms: {
+                time: { value: 0 }
+            },
+            vertexShader: particleVertexShader,
+            fragmentShader: particleFragmentShader,
+            transparent: true,
+            depthWrite: false,
+            blending: THREE.AdditiveBlending,
+            vertexColors: true
+        });
+        
+        const particles = new THREE.Points(particlesGeometry, particlesMaterial);
+        particlesGroup.add(particles);
+        
+        // Magnetosphere
+        const magnetosphereGeometry = new THREE.SphereGeometry(3, 32, 32);
+        magnetosphereGeometry.scale(1, 0.7, 1);
+        const magnetosphereMaterial = new THREE.MeshBasicMaterial({
+            color: 0x4488ff,
+            transparent: true,
+            opacity: 0.2,
+            side: THREE.DoubleSide
+        });
+        const magnetosphere = new THREE.Mesh(magnetosphereGeometry, magnetosphereMaterial);
+        magnetosphere.position.set(30, 0, 0);
+        magnetosphere.visible = false;
+        scene.add(magnetosphere);
+        
+        // Bow shock - where solar wind meets Earth's magnetic field
+        const bowShockGeometry = new THREE.SphereGeometry(5, 32, 32);
+        bowShockGeometry.scale(1, 0.6, 0.8);
+        const bowShockMaterial = new THREE.MeshBasicMaterial({
+            color: 0xff6600,
+            transparent: true,
+            opacity: 0.3,
+            side: THREE.DoubleSide
+        });
+        const bowShock = new THREE.Mesh(bowShockGeometry, bowShockMaterial);
+        bowShock.position.set(25, 0, 0);
+        bowShock.visible = false;
+        scene.add(bowShock);
+        
+        // Magnetotail
+        const magnetotailGeometry = new THREE.CylinderGeometry(1.5, 0.5, 15, 32, 1, true);
+        const magnetotailMaterial = new THREE.MeshBasicMaterial({
+            color: 0x4488ff,
+            transparent: true,
+            opacity: 0.2,
+            side: THREE.DoubleSide
+        });
+        const magnetotail = new THREE.Mesh(magnetotailGeometry, magnetotailMaterial);
+        magnetotail.position.set(38, 0, 0);
+        magnetotail.rotation.z = Math.PI / 2;
+        magnetotail.visible = false;
+        scene.add(magnetotail);
+        
+        // Solar flare system
+        const flareParticlesCount = 1000;
+        const flareGeometry = new THREE.BufferGeometry();
+        const flarePositions = new Float32Array(flareParticlesCount * 3);
+        const flareSizes = new Float32Array(flareParticlesCount);
+        const flareColors = new Float32Array(flareParticlesCount * 3);
+
+        // Flare shape parameters
+        const flareLength = 8;
+        const flareWidth = 2;
+        const flareSpread = 0.5;
+
+        function initializeFlareParticle(index) {
+            const t = Math.random();
+            const angle = Math.random() * Math.PI * 2;
+            const radius = Math.pow(Math.random(), 0.5) * flareWidth * t;
+            
+            // Position along the flare's length with some spread
+            const x = 5 + t * flareLength;
+            const y = Math.cos(angle) * radius;
+            const z = Math.sin(angle) * radius;
+            
+            // Add some turbulence
+            const turbulence = (Math.random() - 0.5) * flareSpread * t;
+            
+            flarePositions[index * 3] = x + turbulence;
+            flarePositions[index * 3 + 1] = y + turbulence;
+            flarePositions[index * 3 + 2] = z + turbulence;
+            
+            // Size variation
+            flareSizes[index] = (1 - t * 0.5) * 0.3;
+            
+            // Color variation from white/yellow core to orange/red edges
+            const coreColor = new THREE.Color(0xffff80);
+            const edgeColor = new THREE.Color(0xff3300);
+            const color = new THREE.Color().lerpColors(coreColor, edgeColor, t);
+            
+            flareColors[index * 3] = color.r;
+            flareColors[index * 3 + 1] = color.g;
+            flareColors[index * 3 + 2] = color.b;
+        }
+
+        // Initialize flare particles
+        for (let i = 0; i < flareParticlesCount; i++) {
+            initializeFlareParticle(i);
+        }
+
+        flareGeometry.setAttribute('position', new THREE.BufferAttribute(flarePositions, 3));
+        flareGeometry.setAttribute('size', new THREE.BufferAttribute(flareSizes, 1));
+        flareGeometry.setAttribute('color', new THREE.BufferAttribute(flareColors, 3));
+
+        // Custom shader for flare particles
+        const flareVertexShader = `
+            attribute float size;
+            uniform float time;
+            varying vec3 vColor;
+            
+            void main() {
+                vColor = color;
+                vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+                
+                // Add some motion
+                float displacement = sin(time * 5.0 + position.x * 0.5) * 0.1;
+                mvPosition.y += displacement;
+                mvPosition.z += displacement * 0.5;
+                
+                gl_PointSize = size * (300.0 / length(mvPosition.xyz));
+                gl_Position = projectionMatrix * mvPosition;
+            }
+        `;
+
+        const flareFragmentShader = `
+            varying vec3 vColor;
+            uniform float opacity;
+            
+            void main() {
+                vec2 center = gl_PointCoord - vec2(0.5);
+                float dist = length(center);
+                if (dist > 0.5) discard;
+                
+                float strength = pow(1.0 - dist * 2.0, 3.0);
+                gl_FragColor = vec4(vColor, strength * opacity);
+            }
+        `;
+
+        const flareMaterial = new THREE.ShaderMaterial({
+            uniforms: {
+                time: { value: 0 },
+                opacity: { value: 1.0 }
+            },
+            vertexShader: flareVertexShader,
+            fragmentShader: flareFragmentShader,
+            transparent: true,
+            depthWrite: false,
+            blending: THREE.AdditiveBlending,
+            vertexColors: true
+        });
+
+        const flareParticles = new THREE.Points(flareGeometry, flareMaterial);
+        flareParticles.visible = false;
+        scene.add(flareParticles);
+
+        // CME (Coronal Mass Ejection)
+        const cmeGeometry = new THREE.SphereGeometry(2, 32, 32);
+        const cmeMaterial = new THREE.MeshBasicMaterial({
+            color: 0xff5500,
+            transparent: true,
+            opacity: 0.5
+        });
+        const cme = new THREE.Mesh(cmeGeometry, cmeMaterial);
+        cme.position.set(5, 0, 0);
+        cme.visible = false;
+        scene.add(cme);
+        
+        // Camera position
+        camera.position.set(0, 15, 50);
+        camera.lookAt(0, 0, 0);
+        
+        // Animation keyframes and captions
+        const captions = [
+            { time: 0, text: "Welcome to our Solar Wind Demonstration" },
+            { time: 3, text: "Our Sun continuously emits a stream of charged particles" },
+            { time: 6, text: "This stream of particles is called the Solar Wind" },
+            { time: 10, text: "The solar wind travels outward from the Sun at speeds of 300-800 km/second" },
+            { time: 14, text: "Solar winds originate from the Sun's corona - its outer atmosphere" },
+            { time: 18, text: "Sometimes, the Sun produces violent eruptions called solar flares" },
+            { time: 22, text: "Solar flares can cause bursts of higher-energy particles" },
+            { time: 26, text: "Larger eruptions known as Coronal Mass Ejections (CMEs) can also occur" },
+            { time: 30, text: "CMEs release enormous clouds of solar plasma and magnetic fields" },
+            { time: 34, text: "When the solar wind reaches Earth, it interacts with our magnetic field" },
+            { time: 38, text: "Earth's magnetic field forms a protective shield called the magnetosphere" },
+            { time: 42, text: "The blue lines represent Earth's magnetic field - like a giant bar magnet" },
+            { time: 46, text: "Earth's magnetic field remains fixed while Earth rotates within it" },
+            { time: 50, text: "The solar wind compresses the magnetosphere on the Sun-facing side" },
+            { time: 54, text: "And stretches it into a long tail on the night side of Earth" },
+            { time: 58, text: "Where the solar wind first meets Earth's magnetic field is called the bow shock" },
+            { time: 62, text: "Some solar wind particles can enter near the Earth's poles" },
+            { time: 66, text: "This creates beautiful auroras - the Northern and Southern lights" },
+            { time: 70, text: "Solar wind affects all planets in our solar system" },
+            { time: 74, text: "Planets with magnetic fields like Earth are protected from direct impact" },
+            { time: 78, text: "Planets without magnetic fields are directly exposed to solar radiation" },
+            { time: 82, text: "Thank you for learning about solar winds in our solar system!" }
+        ];
+        
+        // Info display
+        const infoElement = document.getElementById('info');
+        
+        // Animation clock
+        const clock = new THREE.Clock();
+        clock.start();
+        
+        // Animation loop
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            const elapsedTime = clock.getElapsedTime();
+            
+            // Update star shader uniforms and animation
+            starLayers.forEach((layer, index) => {
+                layer.material.uniforms.time.value = elapsedTime;
+                const speed = 0.0002 * (3 - index); // Faster for closer layers
+                layer.rotation.y = elapsedTime * speed;
+                
+                // Add subtle oscillation
+                layer.position.y = Math.sin(elapsedTime * 0.1 + index) * 0.5;
+            });
+            
+            // Find current caption
+            let currentCaption = captions[0];
+            for (let i = captions.length - 1; i >= 0; i--) {
+                if (elapsedTime >= captions[i].time) {
+                    currentCaption = captions[i];
+                    break;
+                }
+            }
+            
+            // Update caption
+            infoElement.textContent = currentCaption.text;
+            infoElement.classList.remove('hidden');
+            
+            // Update corona shader uniforms with more dynamic values
+            const pulseEffect = Math.sin(elapsedTime * 0.5) * 0.2 + 1.0;
+            corona.material.uniforms.time.value = elapsedTime;
+            outerCorona.material.uniforms.time.value = elapsedTime * 1.2;
+            
+            // Apply subtle pulsing to the sun's corona
+            corona.scale.set(pulseEffect, pulseEffect, pulseEffect);
+            outerCorona.scale.set(pulseEffect * 0.95, pulseEffect * 0.95, pulseEffect * 0.95);
+            
+            // Rotate corona effects at varying speeds
+            corona.rotation.y -= 0.001;
+            outerCorona.rotation.y += 0.0005;
+            sun.rotation.y += 0.0005;
+            
+            // Rotate Earth and clouds
+            earth.rotation.y += 0.01;
+            clouds.rotation.y += 0.012;
+            
+            // Keep magnetic field stationary (not rotating with Earth)
+            
+            // Update particles
+            const positions = particles.geometry.attributes.position.array;
+            const colors = particles.geometry.attributes.color.array;
+            const sizes = particles.geometry.attributes.size.array;
+            
+            for (let i = 0; i < particlesCount; i++) {
+                const i3 = i * 3;
+                
+                // Current position and velocity
+                const position = new THREE.Vector3(
+                    positions[i3],
+                    positions[i3 + 1],
+                    positions[i3 + 2]
+                );
+                
+                const velocity = new THREE.Vector3(
+                    particleVelocities[i3],
+                    particleVelocities[i3 + 1],
+                    particleVelocities[i3 + 2]
+                );
+                
+                // Check for bow shock interaction
+                const isAffected = calculateDeflection(position, velocity);
+                
+                // Update position
+                position.add(velocity);
+                
+                // Update particle properties based on position
+                const distanceFromSun = position.length();
+                const distanceFromEarth = position.distanceTo(earthPos);
+                
+                // Size variation
+                sizes[i] = 0.15 * (1 - Math.min(1, (distanceFromSun - 6) / 24));
+                
+                // Color variation
+                if (isAffected) {
+                    // Heated particles in bow shock (more red)
+                    colors[i3] = 1.0;
+                    colors[i3 + 1] = 0.3;
+                    colors[i3 + 2] = 0.2;
+                } else {
+                    // Normal solar wind color gradient
+                    const colorFactor = Math.min(1, (distanceFromSun - 6) / 24);
+                    colors[i3] = 1.0;
+                    colors[i3 + 1] = 0.8 + colorFactor * 0.2;
+                    colors[i3 + 2] = 0.3 + colorFactor * 0.7;
+                }
+                
+                // Store updated position
+                positions[i3] = position.x;
+                positions[i3 + 1] = position.y;
+                positions[i3 + 2] = position.z;
+                
+                // Reset particles that go too far or are directly behind the Earth (to maintain flow visibility)
+                if (distanceFromSun > 40 || distanceFromEarth < 1.5 || 
+                    (position.x > earthPos.x + 3 && 
+                     Math.abs(position.y - earthPos.y) < 1.0 && 
+                     Math.abs(position.z - earthPos.z) < 1.0)) {
+                    initializeParticle(i);
+                }
+            }
+            
+            // Update geometry attributes
+            particles.geometry.attributes.position.needsUpdate = true;
+            particles.geometry.attributes.color.needsUpdate = true;
+            particles.geometry.attributes.size.needsUpdate = true;
+            // Update particle shader time for animation effects
+            particles.material.uniforms.time.value = elapsedTime;
+            
+            // Update flare - show it precisely with the solar flare caption
+            if (elapsedTime > 18 && elapsedTime < 26) {
+                // Fade in the flare for smoother appearance
+                const fadeIn = Math.min(1, (elapsedTime - 18) * 2); // 0.5 second fade in
+                
+                flareParticles.visible = true;
+                flareParticles.material.uniforms.time.value = elapsedTime;
+                flareParticles.rotation.z = -Math.PI / 2 + Math.sin(elapsedTime) * 0.2;
+                
+                // Apply opacity based on fade-in
+                flareParticles.material.uniforms.opacity.value = fadeIn;
+                
+                // Add some dynamic motion to particles
+                const positions = flareParticles.geometry.attributes.position.array;
+                for (let i = 0; i < flareParticlesCount; i++) {
+                    const i3 = i * 3;
+                    const x = positions[i3];
+                    const y = positions[i3 + 1];
+                    const z = positions[i3 + 2];
+                    
+                    // Add turbulent motion
+                    positions[i3 + 1] += Math.sin(elapsedTime * 5 + x) * 0.02;
+                    positions[i3 + 2] += Math.cos(elapsedTime * 3 + x) * 0.02;
+                }
+                flareParticles.geometry.attributes.position.needsUpdate = true;
+            } else {
+                flareParticles.visible = false;
+            }
+            
+            // Camera movement
+            if (elapsedTime < 14) {
+                // Initial view showing the sun and earth
+                camera.position.x = Math.sin(elapsedTime * 0.1) * 50;
+                camera.position.z = Math.cos(elapsedTime * 0.1) * 50;
+                camera.position.y = 15 + Math.sin(elapsedTime * 0.05) * 5;
+                camera.lookAt(0, 0, 0);
+            } else if (elapsedTime < 18) {
+                // For 14s-15s, smoothly transition from orbit to fixed view
+                if (elapsedTime < 15) {
+                    const t = (elapsedTime - 14); // 1-second transition
+                    // Use very smooth quintic easing for extra smoothness
+                    const smoothT = t * t * t * (t * (t * 6 - 15) + 10);
+                    
+                    // Previous position calculation
+                    const prevX = Math.sin(14 * 0.1) * 50;
+                    const prevY = 15 + Math.sin(14 * 0.05) * 5;
+                    const prevZ = Math.cos(14 * 0.1) * 50;
+                    
+                    // Target fixed position
+                    const fixedX = 12;
+                    const fixedY = 8;
+                    const fixedZ = 15;
+                    
+                    // Very smooth interpolation
+                    camera.position.x = (1 - smoothT) * prevX + smoothT * fixedX;
+                    camera.position.y = (1 - smoothT) * prevY + smoothT * fixedY;
+                    camera.position.z = (1 - smoothT) * prevZ + smoothT * fixedZ;
+                    
+                    // Gradually increase sun vibrance
+                    sunMaterial.emissiveIntensity = 1.2 + smoothT * 0.3;
+                    corona.material.uniforms.time.value = elapsedTime * (1 + smoothT * 0.5);
+                    outerCorona.material.uniforms.time.value = elapsedTime * (1 + smoothT * 0.3);
+                } else {
+                    // Maintain a consistent view of the sun from 15s to 18s
+                    // This removes the jolt by keeping the camera absolutely fixed
+                    camera.position.x = 12;
+                    camera.position.y = 8;
+                    camera.position.z = 15;
+                    
+                    // Make sun look vibrant during entire close-up
+                    sunMaterial.emissiveIntensity = 1.5;
+                    corona.material.uniforms.time.value = elapsedTime * 1.5;
+                    outerCorona.material.uniforms.time.value = elapsedTime * 1.3;
+                }
+                
+                camera.lookAt(0, 0, 0);
+            } else if (elapsedTime < 30) {
+                // Show solar flares and CMEs - continue with enhanced sun appearance
+                cme.visible = elapsedTime > 26;
+                if (cme.visible) {
+                    cme.position.x = 5 + (elapsedTime - 26) * 2;
+                    cme.scale.set(
+                        1 + (elapsedTime - 26) * 0.1,
+                        1 + (elapsedTime - 26) * 0.1,
+                        1 + (elapsedTime - 26) * 0.1
+                    );
+                }
+                
+                // Maintain enhanced sun appearance
+                sunMaterial.emissiveIntensity = 1.5;
+                
+                // Ultra-smooth transition from fixed position to orbit
+                if (elapsedTime < 19) {
+                    // Super smooth transition during the first second (18-19)
+                    // Uses a very gradual start to avoid any perceptible motion during caption change
+                    const t = (elapsedTime - 18);
+                    
+                    // Special easing that starts extremely gradually with almost no movement at t=0
+                    // t^6 gives an extremely slow start that's imperceptible to human eyes
+                    const smoothT = Math.pow(t, 6) * 15; // Multiplier to normalize range
+                    
+                    // Previous fixed position
+                    const fixedX = 12;
+                    const fixedY = 8;
+                    const fixedZ = 15;
+                    
+                    // Very short initial movement - barely perceptible
+                    const angle = smoothT * 0.1; // Extremely small angle change
+                    const orbitRadius = 15 + smoothT * 5; // Very slowly increase radius
+                    
+                    // Calculate new position with very minimal initial movement
+                    const targetX = Math.sin(angle) * orbitRadius;
+                    const targetZ = Math.cos(angle) * orbitRadius;
+                    const targetY = 8 + smoothT * 1; // Very slow vertical change
+                    
+                    // Apply the nearly imperceptible movement
+                    camera.position.x = (1 - smoothT) * fixedX + smoothT * targetX;
+                    camera.position.y = (1 - smoothT) * fixedY + smoothT * targetY;
+                    camera.position.z = (1 - smoothT) * fixedZ + smoothT * targetZ;
+                    
+                } else if (elapsedTime < 22) {
+                    // Continue with orbital movement after the initial transition
+                    const orbitRadius = 20;
+                    const t = (elapsedTime - 19) * 0.25; // Slow, gradual movement 
+                    const angle = t * Math.PI; // Less than half orbit
+                    
+                    camera.position.x = Math.sin(angle) * orbitRadius;
+                    camera.position.z = Math.cos(angle) * orbitRadius;
+                    camera.position.y = 9 + Math.sin(elapsedTime * 0.04) * 1; // Very subtle movement
+                } else {
+                    // Regular orbit for later parts
+                    const orbitRadius = 20;
+                    const orbitSpeed = 0.15;
+                    camera.position.x = Math.sin(elapsedTime * orbitSpeed) * orbitRadius;
+                    camera.position.z = Math.cos(elapsedTime * orbitSpeed) * orbitRadius;
+                    camera.position.y = 8 + Math.sin(elapsedTime * 0.08) * 4;
+                }
+                
+                camera.lookAt(0, 0, 0);
+            } else if (elapsedTime < 34) {
+                // Transition to Earth view
+                const t = (elapsedTime - 30) / 4;
+                // Use cubic easing for smoother motion
+                const smoothT = t * t * (3 - 2 * t);
+                
+                // Get the exact position at the end of the previous section
+                const orbitRadius = 20;
+                const orbitSpeed = 0.15;
+                const prevX = Math.sin(30 * orbitSpeed) * orbitRadius;
+                const prevY = 8 + Math.sin(30 * 0.08) * 4;
+                const prevZ = Math.cos(30 * orbitSpeed) * orbitRadius;
+                
+                // Target position near Earth, coming in with a wide approach
+                const targetX = 40; // Approach from further away
+                const targetY = 8;  // Higher viewpoint
+                const targetZ = 25;  // More angled approach
+                
+                camera.position.x = (1 - smoothT) * prevX + smoothT * targetX;
+                camera.position.y = (1 - smoothT) * prevY + smoothT * targetY;
+                camera.position.z = (1 - smoothT) * prevZ + smoothT * targetZ;
+                
+                // Gradually shift camera focus from Sun to Earth
+                const sunPos = new THREE.Vector3(0, 0, 0);
+                const earthPos = new THREE.Vector3(30, 0, 0);
+                const targetPos = new THREE.Vector3();
+                
+                // Interpolate between sun and earth position for camera target
+                targetPos.lerpVectors(sunPos, earthPos, smoothT);
+                camera.lookAt(targetPos);
+                
+                // Gradually reset sun appearance to normal
+                sunMaterial.emissiveIntensity = 1.5 - (smoothT * 0.3);
+                
+                // Reset CME if it was visible
+                if (cme.visible) {
+                    cme.visible = false;
+                    cme.position.set(5, 0, 0);
+                    cme.scale.set(1, 1, 1);
+                }
+            } else if (elapsedTime < 58) {
+                // Earth and magnetosphere interaction - only make visible after transition completes
+                magnetosphere.visible = elapsedTime > 38;
+                bowShock.visible = elapsedTime > 46;
+                magnetotail.visible = elapsedTime > 42;
+                
+                if (elapsedTime < 34.5) {
+                    // Continue from the exact end position of the previous transition
+                    const t = (elapsedTime - 34) / 0.5; // Half-second transition
+                    const smoothT = t * t * (3 - 2 * t);
+                    
+                    // Previous ending position (from the transition)
+                    const prevX = 40;
+                    const prevY = 8;
+                    const prevZ = 25;
+                    
+                    // Target orbit position
+                    const targetX = 30 + Math.sin(34.5 * 0.2) * 15;
+                    const targetZ = Math.cos(34.5 * 0.2) * 15;
+                    const targetY = 5 + Math.sin(34.5 * 0.1) * 5;
+                    
+                    // Smoothly move to orbit position
+                    camera.position.x = (1 - smoothT) * prevX + smoothT * targetX;
+                    camera.position.y = (1 - smoothT) * prevY + smoothT * targetY;
+                    camera.position.z = (1 - smoothT) * prevZ + smoothT * targetZ;
+                    camera.lookAt(30, 0, 0);
+                } else {
+                    // Normal orbit around Earth
+                    camera.position.x = 30 + Math.sin(elapsedTime * 0.2) * 15;
+                    camera.position.z = Math.cos(elapsedTime * 0.2) * 15;
+                    camera.position.y = 5 + Math.sin(elapsedTime * 0.1) * 5;
+                    camera.lookAt(30, 0, 0);
+                }
+            } else if (elapsedTime < 74) {
+                // Handle transition out and then the steady state view
+                if (elapsedTime < 62) {
+                    // Smooth transition from Earth orbit to combined view (first 4 seconds)
+                    const t = (elapsedTime - 58) / 4;
+                    // Use cubic easing for smoother transition
+                    const smoothT = t * t * (3 - 2 * t);
+                    
+                    // Calculate exact ending position of previous section
+                    const prevX = 30 + Math.sin(58 * 0.2) * 15;
+                    const prevY = 5 + Math.sin(58 * 0.1) * 5;
+                    const prevZ = Math.cos(58 * 0.2) * 15;
+                    
+                    // Smoothly transition to wider view
+                    camera.position.x = (1 - smoothT) * prevX + smoothT * 15;
+                    camera.position.y = (1 - smoothT) * prevY + smoothT * 20;
+                    camera.position.z = (1 - smoothT) * prevZ + smoothT * 50;
+                    
+                    // Gradually shift focus from Earth to midpoint between Sun and Earth
+                    camera.lookAt(
+                        (1 - smoothT) * 30 + smoothT * 15, 
+                        0, 
+                        0
+                    );
+                } else if (elapsedTime < 61.5) {
+                    // Maintain wide orbital view after initial transition
+                    const orbitSpeed = 0.05;
+                    camera.position.x = 15 + Math.sin(elapsedTime * orbitSpeed) * 10;
+                    camera.position.y = 20 + Math.sin(elapsedTime * orbitSpeed * 0.6) * 5;
+                    camera.position.z = 50 + Math.cos(elapsedTime * orbitSpeed) * 10;
+                    camera.lookAt(15, 0, 0);
+                } else if (elapsedTime < 62.5) {
+                    // Extra smooth transition to the "Some solar wind particles..." section
+                    const t = (elapsedTime - 61.5) / 1.0; // 1-second transition
+                    const smoothT = t * t * (3 - 2 * t); // Cubic easing
+                    
+                    // Calculate exact starting position of this micro-transition
+                    const orbitSpeed = 0.05;
+                    const prevX = 15 + Math.sin(61.5 * orbitSpeed) * 10;
+                    const prevY = 20 + Math.sin(61.5 * orbitSpeed * 0.6) * 5;
+                    const prevZ = 50 + Math.cos(61.5 * orbitSpeed) * 10;
+                    
+                    // Calculate target position with a slight adjustment to focus more on Earth
+                    const targetX = 18;
+                    const targetY = 12;
+                    const targetZ = 40;
+                    
+                    // Smooth interpolation between positions
+                    camera.position.x = (1 - smoothT) * prevX + smoothT * targetX;
+                    camera.position.y = (1 - smoothT) * prevY + smoothT * targetY;
+                    camera.position.z = (1 - smoothT) * prevZ + smoothT * targetZ;
+                    
+                    // Adjust the lookAt point to gradually focus more on Earth
+                    const lookAtX = (1 - smoothT) * 15 + smoothT * 22;
+                    camera.lookAt(lookAtX, 0, 0);
+                } else {
+                    // Maintain the new view for the solar wind particles entry section
+                    camera.position.x = 18 + Math.sin((elapsedTime - 62.5) * 0.03) * 2;  // Subtle movement
+                    camera.position.y = 12 + Math.sin((elapsedTime - 62.5) * 0.04) * 1;
+                    camera.position.z = 40 + Math.sin((elapsedTime - 62.5) * 0.03) * 2;
+                    camera.lookAt(22, 0, 0);  // More focus on Earth's position
+                }
+            } else {
+                // Transition to final view section
+                if (elapsedTime < 74.5) {
+                    // Ensure smooth transition from the previous section to the final view
+                    const t = (elapsedTime - 74) / 0.5; // Half-second transition
+                    const smoothT = t * t * (3 - 2 * t); // Cubic easing
+                    
+                    // Last position from previous section
+                    const prevX = 18 + Math.sin((74 - 62.5) * 0.03) * 2;
+                    const prevY = 12 + Math.sin((74 - 62.5) * 0.04) * 1;
+                    const prevZ = 40 + Math.sin((74 - 62.5) * 0.03) * 2;
+                    const prevLookAtX = 22;
+                    
+                    // Target position for final view
+                    const orbitSpeed = 0.05;
+                    const targetX = 15 + Math.sin(74.5 * orbitSpeed) * 10;
+                    const targetY = 20 + Math.sin(74.5 * orbitSpeed * 0.6) * 5;
+                    const targetZ = 50 + Math.cos(74.5 * orbitSpeed) * 10;
+                    const targetLookAtX = 15;
+                    
+                    // Smooth interpolation
+                    camera.position.x = (1 - smoothT) * prevX + smoothT * targetX;
+                    camera.position.y = (1 - smoothT) * prevY + smoothT * targetY;
+                    camera.position.z = (1 - smoothT) * prevZ + smoothT * targetZ;
+                    
+                    // Smooth camera target transition
+                    const lookAtX = (1 - smoothT) * prevLookAtX + smoothT * targetLookAtX;
+                    camera.lookAt(lookAtX, 0, 0);
+                } else {
+                    // Final wide orbital view
+                    const orbitSpeed = 0.05;
+                    camera.position.x = 15 + Math.sin(elapsedTime * orbitSpeed) * 10;
+                    camera.position.y = 20 + Math.sin(elapsedTime * orbitSpeed * 0.6) * 5;
+                    camera.position.z = 50 + Math.cos(elapsedTime * orbitSpeed) * 10;
+                    camera.lookAt(15, 0, 0);
+                }
+            }
+            
+            // Render with post-processing
+            composer.render();
+        }
+        
+        animate();
+        
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            composer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>
